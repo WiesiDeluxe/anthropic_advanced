@@ -1,0 +1,12 @@
+{
+  "domain": "anthropic_advanced",
+  "name": "Anthropic Advanced Conversation",
+  "codeowners": ["@WiesiDeluxe"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/WiesiDeluxe/anthropic_advanced",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/WiesiDeluxe/anthropic_advanced/issues",
+  "requirements": ["anthropic>=0.42.0"],
+  "version": "1.0.0"
+}

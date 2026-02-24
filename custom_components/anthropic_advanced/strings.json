@@ -1,0 +1,37 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anthropic Advanced Conversation",
+        "description": "Konfiguriere die Anthropic Claude Integration mit vollem Service-Zugriff.",
+        "data": {
+          "api_key": "API Key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zu Anthropic API fehlgeschlagen",
+      "invalid_auth": "Ungültiger API Key",
+      "unknown": "Unbekannter Fehler"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Optionen",
+        "data": {
+          "prompt": "System Prompt (Jinja2 Templates möglich)",
+          "auto_routing": "Auto-Routing (schnelles Modell für einfache Befehle)",
+          "model": "Komplexes Modell",
+          "fast_model": "Schnelles Modell",
+          "max_tokens": "Maximale Tokens",
+          "temperature": "Temperatur",
+          "max_tool_calls": "Maximale Tool-Aufrufe pro Konversation",
+          "thinking_budget": "Thinking Budget (0 = deaktiviert)",
+          "max_history_messages": "Max. History-Nachrichten",
+          "max_history_tokens": "Max. History-Tokens"
+        }
+      }
+    }
+  }
+}

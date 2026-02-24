@@ -1,0 +1,37 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anthropic Advanced Conversation",
+        "description": "Claude als Conversation Agent mit vollem Service-Zugriff einrichten.",
+        "data": {
+          "api_key": "Anthropic API Key"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zu Anthropic API fehlgeschlagen",
+      "invalid_auth": "Ungültiger API Key",
+      "unknown": "Unbekannter Fehler"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Anthropic Advanced — Optionen",
+        "data": {
+          "prompt": "System Prompt (Jinja2 Templates möglich)",
+          "auto_routing": "Auto-Routing (Haiku für einfache Befehle, Sonnet für komplexe)",
+          "model": "Komplexes Modell (für Analysen, Erklärungen)",
+          "fast_model": "Schnelles Modell (für Steuerung, einfache Abfragen)",
+          "max_tokens": "Maximale Tokens",
+          "temperature": "Temperatur (0.0 – 1.0)",
+          "max_tool_calls": "Max. Tool-Aufrufe pro Nachricht",
+          "thinking_budget": "Thinking Budget (0 = deaktiviert, min. 1024)",
+          "max_history_messages": "Max. Nachrichten in History (pro Conversation)",
+          "max_history_tokens": "Max. Token-Budget für History (geschätzt)"
+        }
+      }
+    }
+  }
+}

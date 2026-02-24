@@ -1,0 +1,29 @@
+debug_history:
+  name: Debug History
+  description: >-
+    Zeigt Statistiken zur Conversation History an.
+    Ohne conversation_id: Übersicht aller aktiven Conversations.
+    Mit conversation_id: Details zu einer bestimmten Conversation.
+  fields:
+    conversation_id:
+      name: Conversation ID
+      description: Optional — ULID einer bestimmten Conversation
+      required: false
+      example: "01HXY..."
+      selector:
+        text:
+
+clear_history:
+  name: Clear History
+  description: >-
+    Löscht die Conversation History.
+    Ohne conversation_id: Alle Conversations löschen.
+    Mit conversation_id: Nur eine bestimmte Conversation löschen.
+  fields:
+    conversation_id:
+      name: Conversation ID
+      description: Optional — ULID einer bestimmten Conversation
+      required: false
+      example: "01HXY..."
+      selector:
+        text:
