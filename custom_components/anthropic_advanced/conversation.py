@@ -435,9 +435,17 @@ class AnthropicAdvancedConversationEntity(ConversationEntity):
         """Call Claude API with iterative tool use."""
         tool_call_count = 0
         client = await self._get_client()
+        total_input_tokens = 0
+        total_output_tokens = 0
+        model_used = api_params.get("model", "unknown")
 
         while True:
             response = await client.messages.create(**api_params)
+
+            # Track token usage
+            if response.usage:
+                total_input_tokens += response.usage.input_tokens
+                total_output_tokens += response.usage.output_tokens
 
             # Check if Claude wants to use tools
             tool_use_blocks = [
@@ -446,10 +454,19 @@ class AnthropicAdvancedConversationEntity(ConversationEntity):
             ]
 
             if not tool_use_blocks or response.stop_reason == "end_turn":
+                # Update usage stats
+                self._update_usage_stats(
+                    model_used, total_input_tokens, total_output_tokens,
+                    tool_call_count
+                )
                 return response
 
             if tool_call_count >= max_tool_calls:
                 _LOGGER.warning("Maximum tool calls (%s) reached", max_tool_calls)
+                self._update_usage_stats(
+                    model_used, total_input_tokens, total_output_tokens,
+                    tool_call_count
+                )
                 return response
 
             # Execute each tool call
@@ -477,6 +494,67 @@ class AnthropicAdvancedConversationEntity(ConversationEntity):
             api_params["messages"].append(
                 {"role": "user", "content": tool_results}
             )
+
+    def _update_usage_stats(
+        self, model: str, input_tokens: int, output_tokens: int, tool_calls: int
+    ) -> None:
+        """Update token usage statistics and fire events for HA sensors."""
+        # Pricing per million tokens (as of 2025)
+        pricing = {
+            "haiku": {"input": 0.80, "output": 4.00},
+            "sonnet": {"input": 3.00, "output": 15.00},
+            "opus": {"input": 15.00, "output": 75.00},
+        }
+
+        # Determine tier
+        model_lower = model.lower()
+        tier = "sonnet"  # default
+        for key in pricing:
+            if key in model_lower:
+                tier = key
+                break
+
+        cost = (
+            input_tokens * pricing[tier]["input"] / 1_000_000
+            + output_tokens * pricing[tier]["output"] / 1_000_000
+        )
+
+        # Store in hass.data for sensors to read
+        stats = self.hass.data.setdefault(DOMAIN, {}).setdefault("usage", {
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_cost": 0.0,
+            "total_requests": 0,
+            "total_tool_calls": 0,
+            "last_model": "",
+            "last_input_tokens": 0,
+            "last_output_tokens": 0,
+            "last_cost": 0.0,
+        })
+
+        stats["total_input_tokens"] += input_tokens
+        stats["total_output_tokens"] += output_tokens
+        stats["total_cost"] += cost
+        stats["total_requests"] += 1
+        stats["total_tool_calls"] += tool_calls
+        stats["last_model"] = model
+        stats["last_input_tokens"] = input_tokens
+        stats["last_output_tokens"] = output_tokens
+        stats["last_cost"] = cost
+
+        _LOGGER.debug(
+            "Usage: %s in=%d out=%d cost=$%.4f (total: $%.4f)",
+            model, input_tokens, output_tokens, cost, stats["total_cost"]
+        )
+
+        # Fire event for automations
+        self.hass.bus.async_fire(f"{DOMAIN}_usage", {
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost": round(cost, 6),
+            "tool_calls": tool_calls,
+        })
 
     async def _render_prompt(self, prompt_template: str) -> str:
         """Render the system prompt with Jinja2 templates."""

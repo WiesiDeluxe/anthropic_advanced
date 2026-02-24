@@ -17,7 +17,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.CONVERSATION]
+PLATFORMS = [Platform.CONVERSATION, Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -138,6 +138,187 @@ def _register_debug_services(hass: HomeAssistant) -> None:
         }),
         supports_response=SupportsResponse.ONLY,
     )
+
+    async def handle_reset_usage(call: ServiceCall) -> ServiceResponse:
+        """Reset token usage statistics. Optionally save yesterday's stats."""
+        stats = hass.data.setdefault(DOMAIN, {}).get("usage")
+        if not stats:
+            return {"status": "no_stats"}
+
+        # Archive current stats before reset
+        archive = {k: v for k, v in stats.items()}
+
+        # Reset counters
+        stats["total_input_tokens"] = 0
+        stats["total_output_tokens"] = 0
+        stats["total_cost"] = 0.0
+        stats["total_requests"] = 0
+        stats["total_tool_calls"] = 0
+
+        return {
+            "status": "reset",
+            "archived": archive,
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        "reset_usage",
+        handle_reset_usage,
+        schema=vol.Schema({}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def handle_analyze_home(call: ServiceCall) -> ServiceResponse:
+        """Proactive analysis: Check home state for anomalies and generate alerts."""
+        anomalies = []
+        warnings = []
+        info = []
+
+        for state in hass.states.async_all():
+            entity_id = state.entity_id
+            domain = state.domain
+            attrs = state.attributes
+            friendly = attrs.get("friendly_name", entity_id)
+            val = state.state
+
+            # Skip unavailable/unknown
+            if val in ("unavailable", "unknown"):
+                if domain in ("light", "switch", "climate", "cover", "sensor"):
+                    anomalies.append({
+                        "entity_id": entity_id,
+                        "name": friendly,
+                        "issue": f"Entity is {val}",
+                        "severity": "warning",
+                    })
+                continue
+
+            # Temperature anomalies
+            if domain == "sensor" and attrs.get("device_class") == "temperature":
+                try:
+                    temp = float(val)
+                    unit = attrs.get("unit_of_measurement", "°C")
+                    if "°C" in unit or unit == "C":
+                        if temp > 35:
+                            anomalies.append({
+                                "entity_id": entity_id,
+                                "name": friendly,
+                                "issue": f"Very high temperature: {temp}°C",
+                                "severity": "alert",
+                            })
+                        elif temp < 5 and "outdoor" not in entity_id and "außen" not in friendly.lower():
+                            anomalies.append({
+                                "entity_id": entity_id,
+                                "name": friendly,
+                                "issue": f"Very low indoor temperature: {temp}°C",
+                                "severity": "alert",
+                            })
+                except (ValueError, TypeError):
+                    pass
+
+            # Humidity anomalies
+            if domain == "sensor" and attrs.get("device_class") == "humidity":
+                try:
+                    hum = float(val)
+                    if hum > 80:
+                        warnings.append({
+                            "entity_id": entity_id,
+                            "name": friendly,
+                            "issue": f"High humidity: {hum}%",
+                            "severity": "warning",
+                        })
+                    elif hum < 20:
+                        warnings.append({
+                            "entity_id": entity_id,
+                            "name": friendly,
+                            "issue": f"Very low humidity: {hum}%",
+                            "severity": "warning",
+                        })
+                except (ValueError, TypeError):
+                    pass
+
+            # Battery low
+            if attrs.get("device_class") == "battery":
+                try:
+                    batt = float(val)
+                    if batt < 15:
+                        warnings.append({
+                            "entity_id": entity_id,
+                            "name": friendly,
+                            "issue": f"Low battery: {batt}%",
+                            "severity": "warning",
+                        })
+                except (ValueError, TypeError):
+                    pass
+
+            # Doors/windows open for a long time (binary_sensor)
+            if domain == "binary_sensor" and val == "on":
+                dc = attrs.get("device_class", "")
+                if dc in ("door", "window", "garage_door"):
+                    info.append({
+                        "entity_id": entity_id,
+                        "name": friendly,
+                        "issue": f"{dc.title()} is open",
+                        "severity": "info",
+                    })
+
+            # Lights still on
+            if domain == "light" and val == "on":
+                info.append({
+                    "entity_id": entity_id,
+                    "name": friendly,
+                    "issue": "Light is on",
+                    "severity": "info",
+                })
+
+        return {
+            "anomalies": anomalies,
+            "warnings": warnings,
+            "info": info,
+            "summary": {
+                "alerts": len(anomalies),
+                "warnings": len(warnings),
+                "info_items": len(info),
+            },
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        "analyze_home",
+        handle_analyze_home,
+        schema=vol.Schema({}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    # ─── Daily auto-reset at midnight ───
+    from homeassistant.helpers.event import async_track_time_change
+
+    async def _daily_reset(now) -> None:
+        """Auto-reset usage stats at midnight."""
+        stats = hass.data.get(DOMAIN, {}).get("usage")
+        if stats:
+            _LOGGER.info(
+                "Daily usage reset — yesterday: $%.4f (%d requests, %d+%d tokens)",
+                stats.get("total_cost", 0),
+                stats.get("total_requests", 0),
+                stats.get("total_input_tokens", 0),
+                stats.get("total_output_tokens", 0),
+            )
+            # Fire event with yesterday's stats for automations
+            hass.bus.async_fire(f"{DOMAIN}_daily_summary", {
+                "cost": round(stats.get("total_cost", 0), 4),
+                "requests": stats.get("total_requests", 0),
+                "input_tokens": stats.get("total_input_tokens", 0),
+                "output_tokens": stats.get("total_output_tokens", 0),
+                "tool_calls": stats.get("total_tool_calls", 0),
+            })
+            # Reset
+            stats["total_input_tokens"] = 0
+            stats["total_output_tokens"] = 0
+            stats["total_cost"] = 0.0
+            stats["total_requests"] = 0
+            stats["total_tool_calls"] = 0
+
+    async_track_time_change(hass, _daily_reset, hour=0, minute=0, second=0)
     return True
 
 

@@ -94,6 +94,50 @@ EXTENDED_TOOLS = [
             "required": ["card_type"],
         },
     },
+    {
+        "name": "memory",
+        "description": (
+            "Persistent memory for storing and retrieving user preferences, "
+            "frequently used settings, and personal information across sessions. "
+            "Use 'save' to remember something, 'get' to recall a specific key, "
+            "'list' to see all stored memories, 'delete' to remove one. "
+            "Examples: light preferences, wake-up times, favorite scenes, names, "
+            "room assignments, routine schedules."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Memory action",
+                    "enum": ["save", "get", "list", "delete"],
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Memory key (e.g. 'light_preference_office', 'wakeup_time_kids', 'favorite_scene')",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Value to store (for 'save' action)",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "analyze_home",
+        "description": (
+            "Proactive home analysis: scans all entities for anomalies, warnings, "
+            "and status info. Detects: unavailable devices, temperature extremes, "
+            "high/low humidity, low batteries, open doors/windows, lights left on. "
+            "Use this when the user asks 'is everything ok?', 'any problems?', "
+            "'home status', 'what should I know?', or for a morning briefing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 
@@ -108,6 +152,10 @@ async def execute_extended_tool(
             return await _manage_automation(hass, tool_input)
         elif tool_name == "generate_dashboard_card":
             return await _generate_dashboard_card(hass, tool_input)
+        elif tool_name == "memory":
+            return await _memory(hass, tool_input)
+        elif tool_name == "analyze_home":
+            return await _analyze_home(hass, tool_input)
         else:
             return json.dumps({"error": f"Unknown extended tool: {tool_name}"})
     except Exception as e:
@@ -354,3 +402,163 @@ async def _generate_dashboard_card(
         "yaml": yaml_output,
         "note": "Kopiere dieses YAML in dein Dashboard (Dashboard bearbeiten → Karte hinzufügen → YAML-Editor)",
     })
+
+# ═══════════════════════════════════════════════════════════════
+# Memory — Persistent key-value storage via HA helpers
+# ═══════════════════════════════════════════════════════════════
+
+MEMORY_FILE = ".anthropic_memory.json"
+
+
+def _get_memory_path(hass: HomeAssistant) -> str:
+    """Get path to memory file in HA config directory."""
+    return hass.config.path(MEMORY_FILE)
+
+
+def _load_memory(hass: HomeAssistant) -> dict[str, str]:
+    """Load memory from JSON file."""
+    import os
+    path = _get_memory_path(hass)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            _LOGGER.error("Failed to load memory: %s", e)
+    return {}
+
+
+def _save_memory(hass: HomeAssistant, data: dict[str, str]) -> None:
+    """Save memory to JSON file."""
+    path = _get_memory_path(hass)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except IOError as e:
+        _LOGGER.error("Failed to save memory: %s", e)
+
+
+async def _memory(
+    hass: HomeAssistant, tool_input: dict[str, Any]
+) -> str:
+    """Persistent memory: save, get, list, or delete key-value pairs."""
+    action = tool_input.get("action", "list")
+    key = tool_input.get("key", "")
+    value = tool_input.get("value", "")
+
+    # Load from file (run in executor to avoid blocking)
+    memory = await hass.async_add_executor_job(_load_memory, hass)
+
+    if action == "save":
+        if not key:
+            return json.dumps({"error": "Key is required for save action"})
+        memory[key] = value
+        await hass.async_add_executor_job(_save_memory, hass, memory)
+        return json.dumps({
+            "action": "saved",
+            "key": key,
+            "value": value,
+            "total_memories": len(memory),
+        })
+
+    elif action == "get":
+        if not key:
+            return json.dumps({"error": "Key is required for get action"})
+        if key in memory:
+            return json.dumps({"key": key, "value": memory[key]})
+        else:
+            return json.dumps({"key": key, "found": False})
+
+    elif action == "list":
+        if not memory:
+            return json.dumps({"memories": [], "total": 0})
+        return json.dumps({
+            "memories": [{"key": k, "value": v} for k, v in memory.items()],
+            "total": len(memory),
+        })
+
+    elif action == "delete":
+        if not key:
+            return json.dumps({"error": "Key is required for delete action"})
+        if key in memory:
+            deleted_value = memory.pop(key)
+            await hass.async_add_executor_job(_save_memory, hass, memory)
+            return json.dumps({"action": "deleted", "key": key, "previous_value": deleted_value})
+        else:
+            return json.dumps({"key": key, "found": False})
+
+    return json.dumps({"error": f"Unknown memory action: {action}"})
+
+
+async def _analyze_home(
+    hass: HomeAssistant, tool_input: dict[str, Any]
+) -> str:
+    """Proactive home analysis — scan for anomalies and status."""
+    anomalies = []
+    warnings = []
+    info = []
+
+    for state in hass.states.async_all():
+        entity_id = state.entity_id
+        domain = state.domain
+        attrs = state.attributes
+        friendly = attrs.get("friendly_name", entity_id)
+        val = state.state
+
+        # Unavailable devices
+        if val in ("unavailable", "unknown"):
+            if domain in ("light", "switch", "climate", "cover", "sensor", "binary_sensor"):
+                anomalies.append(f"⚠️ {friendly} ({entity_id}): {val}")
+            continue
+
+        # Temperature anomalies
+        if domain == "sensor" and attrs.get("device_class") == "temperature":
+            try:
+                temp = float(val)
+                if temp > 35:
+                    anomalies.append(f"🔥 {friendly}: {temp}°C (sehr hoch!)")
+                elif temp < 5 and "outdoor" not in entity_id and "außen" not in friendly.lower() and "outside" not in entity_id:
+                    anomalies.append(f"🥶 {friendly}: {temp}°C (sehr kalt!)")
+            except (ValueError, TypeError):
+                pass
+
+        # Humidity
+        if domain == "sensor" and attrs.get("device_class") == "humidity":
+            try:
+                hum = float(val)
+                if hum > 80:
+                    warnings.append(f"💧 {friendly}: {hum}% (hohe Luftfeuchtigkeit)")
+                elif hum < 20:
+                    warnings.append(f"🏜️ {friendly}: {hum}% (sehr trocken)")
+            except (ValueError, TypeError):
+                pass
+
+        # Battery
+        if attrs.get("device_class") == "battery":
+            try:
+                batt = float(val)
+                if batt < 15:
+                    warnings.append(f"🪫 {friendly}: {batt}% Batterie")
+            except (ValueError, TypeError):
+                pass
+
+        # Open doors/windows
+        if domain == "binary_sensor" and val == "on":
+            dc = attrs.get("device_class", "")
+            if dc in ("door", "window", "garage_door"):
+                info.append(f"🚪 {friendly}: offen")
+
+        # Lights on
+        if domain == "light" and val == "on":
+            brightness = attrs.get("brightness")
+            bri_str = f" ({round(brightness/255*100)}%)" if brightness else ""
+            info.append(f"💡 {friendly}: an{bri_str}")
+
+    result = {
+        "anomalies": anomalies,
+        "warnings": warnings,
+        "lights_and_doors": info,
+        "summary": f"{len(anomalies)} Probleme, {len(warnings)} Warnungen, "
+                   f"{len(info)} aktive Geräte/Öffnungen"
+    }
+    return json.dumps(result, ensure_ascii=False)

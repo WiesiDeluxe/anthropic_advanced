@@ -27,3 +27,15 @@ clear_history:
       example: "01HXY..."
       selector:
         text:
+
+reset_usage:
+  name: Reset Usage Statistics
+  description: >-
+    Setzt die Token-Usage-Statistiken zurück (Input/Output Tokens, Kosten, Requests).
+    Wird automatisch täglich um Mitternacht ausgeführt.
+
+analyze_home:
+  name: Analyze Home
+  description: >-
+    Proaktive Analyse: Scannt alle Entities auf Anomalien (unavailable Geräte,
+    Temperatur-Extreme, niedrige Batterien, offene Türen/Fenster, eingeschaltete Lichter).
