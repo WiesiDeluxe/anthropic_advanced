@@ -4,6 +4,10 @@
 [![GitHub Release](https://img.shields.io/github/v/release/WiesiDeluxe/anthropic_advanced)](https://github.com/WiesiDeluxe/anthropic_advanced/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+<p align="center">
+  <img src="images/feature_overview.png" alt="Anthropic Advanced Conversation — Feature Overview" width="800">
+</p>
+
 A custom Home Assistant integration that provides **Claude as a conversation agent with FULL access to all Home Assistant services** — not limited to the Assist/Intents API like the native Anthropic integration.
 
 ## Why this integration?
@@ -17,6 +21,9 @@ The official Home Assistant Anthropic integration limits Claude to the Assist AP
 - 🤖 **Automation management** (list, enable, disable, trigger, create)
 - 🎨 **Dashboard card generation** as YAML
 - 🔍 **Dynamic entity search** across your entire setup
+- 🧠 **Persistent memory** — remembers preferences across sessions
+- 📈 **Token usage tracking** — 9 sensors with cost calculation
+- 🔔 **Proactive home analysis** — anomaly and status detection
 
 ## Feature Comparison
 
@@ -34,6 +41,9 @@ The official Home Assistant Anthropic integration limits Claude to the Assist AP
 | **Dynamic Entity Search** | ❌ | ✅ |
 | **Auto-Routing (fast/smart model)** | ❌ | ✅ |
 | **Conversation History Management** | basic | ✅ token-budgeted + compression |
+| **Token Usage Tracking** | ❌ | ✅ 9 diagnostic sensors |
+| **Persistent Memory** | ❌ | ✅ cross-session |
+| **Proactive Home Analysis** | ❌ | ✅ anomaly detection |
 | Jinja2 System Prompt | ✅ | ✅ |
 | Extended Thinking | ✅ | ✅ |
 | UI Configuration | ✅ | ✅ |
@@ -80,7 +90,8 @@ The official Home Assistant Anthropic integration limits Claude to the Assist AP
 The system prompt supports **Jinja2 templates** with access to all exposed entities:
 
 ```
-You are a smart home assistant. Current time: {{now().strftime('%A %d.%m.%Y %H:%M')}}.
+You are a smart home assistant.
+Current time: {{now().strftime('%A %d.%m.%Y %H:%M')}}.
 
 Available devices:
 {% for entity in exposed_entities -%}
@@ -94,7 +105,8 @@ Available devices:
 ```
 For TTS, use: domain=tts service=speak entity_id=tts.home_assistant_cloud
   service_data: {media_player_entity_id: <target>, message: <text>}
-Speakers: Living Room=media_player.sonos_living_room Kitchen=media_player.sonos_kitchen
+Speakers: Living Room=media_player.sonos_living_room
+          Kitchen=media_player.sonos_kitchen
 ```
 
 **Room groups** — Define groups for multi-room commands:
@@ -136,26 +148,64 @@ List, enable, disable, trigger, or create automations.
 ### `generate_dashboard_card`
 Generate dashboard cards as YAML output.
 
-## Diagnostic Services
+### `memory` *(v1.1.0)*
+Persistent memory tool for saving and recalling user preferences:
+- **save** — Store a key-value pair (e.g., "Office light preference: 60%")
+- **get** — Retrieve a saved value
+- **list** — Show all saved memories
+- **delete** — Remove a memory
+
+Data persists across restarts in `.anthropic_memory.json`.
+
+### `analyze_home` *(v1.1.0)*
+Proactive home analysis tool that scans all entities for:
+- Unavailable/offline devices
+- Temperature extremes (>35°C or <5°C indoors)
+- Humidity issues (>80% or <20%)
+- Low battery devices (<15%)
+- Open doors, windows, or garage doors
+- Lights left on (with brightness level)
+
+## Token Usage Tracking *(v1.1.0)*
+
+Nine diagnostic sensors track your API usage in real-time:
+
+| Sensor | Description |
+|---|---|
+| `total_input_tokens` | Cumulative input tokens sent |
+| `total_output_tokens` | Cumulative output tokens received |
+| `total_cost` | Running cost in USD |
+| `total_requests` | Number of API calls |
+| `total_tool_calls` | Number of tool invocations |
+| `last_model` | Model used for last request |
+| `last_input_tokens` | Input tokens for last request |
+| `last_output_tokens` | Output tokens for last request |
+| `last_cost` | Cost of last request |
+
+Cost calculation uses official Anthropic pricing per model tier (Haiku/Sonnet/Opus).
+
+## Services
 
 ### `anthropic_advanced.debug_history`
-Shows conversation history statistics in Developer Tools → Services (call with "Return Response"):
+Shows conversation history statistics in Developer Tools → Services:
 - Without parameters: Overview of all active conversations
-- With `conversation_id`: Detailed breakdown (messages, tool blocks, token usage, budget %)
+- With `conversation_id`: Detailed breakdown
 
 ### `anthropic_advanced.clear_history`
-Clear conversation history:
-- Without parameters: Clear all conversations
-- With `conversation_id`: Clear a specific conversation
+Clear conversation history (all or specific conversation).
 
-## Example Commands
+### `anthropic_advanced.reset_usage` *(v1.1.0)*
+Manually reset token usage counters. Returns archived values before reset.
 
-- *"Announce in the kitchen: Dinner is ready"* → TTS via `tts.speak`
-- *"What was the temperature last night?"* → History query
-- *"How much solar did we produce today?"* → Energy summary
-- *"Turn off all lights downstairs"* → Multi-service call
-- *"Create an automation: Turn on lights at sunset"* → Generates YAML
-- *"What devices are in the living room?"* → Entity search
+### `anthropic_advanced.analyze_home` *(v1.1.0)*
+Run proactive home analysis as a service call. Returns JSON with anomalies, warnings, and info.
+
+## Events *(v1.1.0)*
+
+| Event | When | Data |
+|---|---|---|
+| `anthropic_advanced_usage` | After each API request | model, tokens, cost, tool_calls |
+| `anthropic_advanced_daily_summary` | Midnight (auto-reset) | Yesterday's totals |
 
 ## How Auto-Routing Works
 
@@ -174,6 +224,17 @@ The conversation history is managed with:
 - **Token budgeting**: Messages are trimmed when exceeding the configured token budget
 - **TTL cleanup**: Inactive conversations are automatically removed after 1 hour
 - **Configurable limits**: Both message count and token budget can be adjusted in options
+
+## Example Commands
+
+- *"Announce in the kitchen: Dinner is ready"* → TTS via `tts.speak`
+- *"What was the temperature last night?"* → History query
+- *"How much solar did we produce today?"* → Energy summary
+- *"Turn off all lights downstairs"* → Multi-service call
+- *"Create an automation: Turn on lights at sunset"* → Generates YAML
+- *"What devices are in the living room?"* → Entity search
+- *"Remember: I prefer office lights at 60%"* → Saves to memory
+- *"Is everything okay at home?"* → Proactive analysis
 
 ## Requirements
 
